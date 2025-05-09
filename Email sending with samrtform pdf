@@ -1,0 +1,504 @@
+*&---------------------------------------------------------------------*
+*& Include          ZRSD_DESPATCH_CANCEL_GET
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& Form get
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM get .
+
+
+  lv_date2 = s_fkdat-high.
+
+
+  DATA : lv_first_of_cur_mon TYPE sy-datum,
+         lv_last_of_cur_mon  TYPE sy-datum.
+  DATA : lv_date1 TYPE sy-datum.
+  DATA : lv_date3 TYPE sy-datum.
+*  lv_date3 = sy-datum - 1.
+  lv_date3 = '20240105'.
+
+
+  CONCATENATE lv_date3+0(6) '01' INTO lv_first_of_cur_mon.
+
+  lv_date1 = lv_last_of_cur_mon+6(2).
+
+  lv_date = s_fkdat-low .
+  SELECT FROM vbrk
+  FIELDS vbeln,knumv,fkdat,belnr,kunag
+  WHERE fkdat IN @s_fkdat
+  INTO TABLE @DATA(lt_vbrk3).
+
+  IF lt_vbrk3 IS NOT INITIAL.
+    SELECT  vbeln,posnr ,aubel
+    FROM vbrp
+    FOR ALL ENTRIES IN @lt_vbrk3
+    WHERE vbeln = @lt_vbrk3-vbeln
+    AND werks = '1100'
+    INTO TABLE  @DATA(lt_vbrp3).
+  ENDIF.
+  IF lt_vbrp3 IS NOT INITIAL.
+
+   SELECT FROM vbrk
+    FIELDS vbeln,knumv,fkdat,belnr,kunag,AEDAT
+    FOR ALL ENTRIES IN @lt_vbrp3
+    WHERE vbeln = @lt_vbrp3-vbeln
+    AND  vtweg IN ('10','20')
+    AND  spart IN ('10','20')
+    AND   fksto = 'X'
+    AND   rfbsk = 'E'
+    AND   fkart = 'ZODS'
+    INTO TABLE @DATA(lt_vbrk4).
+  IF lt_vbrk4 IS NOT INITIAL.
+    SELECT FROM vbrk
+    FIELDS vbeln,knumv,fkdat,belnr,kunag,AEDAT
+    FOR ALL ENTRIES IN @lt_vbrk4
+      WHERE vbeln = @lt_vbrk4-vbeln
+      AND  vtweg IN ('10','20')
+      AND  spart IN ('10','20')
+      AND   fksto = 'X'
+*      AND   rfbsk = 'E'
+      AND   fkart = 'ZODS'
+      and fkdat NE @lt_vbrk4-AEDAT
+     INTO TABLE @DATA(lt_vbrk).
+
+  ENDIF.
+  ENDIF.
+
+  SORT lt_vbrk BY kunag.
+  DATA(lt_vbrk2) = lt_vbrk[].
+
+  DELETE ADJACENT DUPLICATES FROM lt_vbrk2 COMPARING kunag.
+
+  IF lt_vbrk IS NOT INITIAL.
+    SELECT  vbeln,posnr,aubel
+    FROM vbrp
+
+    FOR ALL ENTRIES IN @lt_vbrk
+    WHERE vbeln = @lt_vbrk-vbeln   INTO TABLE  @DATA(lt_vbrp).
+  ENDIF.
+
+  LOOP AT lt_vbrk2 INTO DATA(lw_vbrk2).
+    REFRESH: iqual,ibill ,imara ,ikna1 ,itabi ,itabh,lv_output_p-otfdata, lt_lines,itabi[].
+
+    LOOP AT lt_vbrk INTO DATA(lw_vbrk) WHERE kunag = lw_vbrk2-kunag.
+
+      SELECT vbrk~vbeln
+          vbrp~posnr
+          vbrk~fkdat
+          vbrk~xblnr
+          vbrk~kunag
+          vbrk~contn
+          vbrk~vkorg
+          vbrk~vtweg
+          vbrp~matnr
+          vbrp~fkimg
+          vbrp~netwr
+          INTO CORRESPONDING FIELDS OF TABLE ibill
+          FROM vbrk
+          INNER JOIN vbrp  ON vbrk~mandt = vbrp~mandt
+                          AND vbrk~vbeln = vbrp~vbeln
+
+          WHERE vbrp~fkimg NE 0
+          AND   vbrk~fksto = 'X'
+*          AND   vbrk~rfbsk = 'E'
+          AND   vbrk~fkart = 'ZODS'
+          AND   vbrk~vbeln = lw_vbrk-vbeln
+          AND   vbrk~fkdat = lw_vbrk-fkdat
+          AND   vbrk~kunag = lw_vbrk-kunag
+          AND vbrk~vtweg IN ('10','20')
+          AND vbrk~spart IN ('10','20')
+          and vbrk~fkdat ne lw_vbrk-AEDAT.
+
+**********************************
+      IF sy-subrc NE 0.
+*      MESSAGE 'No Billing Document found for this selection.' TYPE 'I'.
+*      STOP.
+      ELSE.
+
+        SELECT mara~matnr
+               mara~extwg
+               twewt~ewbez
+               INTO TABLE iqual
+               FROM mara
+               INNER JOIN twewt ON  mara~mandt = twewt~mandt
+                                AND mara~extwg = twewt~extwg
+               FOR ALL ENTRIES IN ibill
+               WHERE mara~matnr = ibill-matnr.
+
+        SELECT mara~matnr
+               groes
+               makt~maktx
+              FROM mara
+              INNER JOIN makt ON mara~matnr EQ makt~matnr
+              INTO TABLE imara
+              FOR ALL ENTRIES IN ibill
+              WHERE mara~matnr = ibill-matnr.
+
+
+        SELECT kunnr
+               ort01
+               FROM kna1
+               INTO TABLE ikna1
+               FOR ALL ENTRIES IN ibill
+               WHERE kunnr = ibill-kunag.
+      ENDIF.
+
+      SORT imara BY matnr.
+      SORT iqual BY matnr.
+      SORT ikna1 BY kunnr.
+
+      ibill1[] = ibill[].
+      SORT ibill1 BY kunag.
+      DELETE ADJACENT DUPLICATES FROM ibill1 COMPARING kunag.
+
+      LOOP AT ibill1.
+        itabh-kunag = ibill1-kunag.
+        itabh-vkorg = ibill1-vkorg.
+        itabh-vtweg = ibill1-vtweg.
+        APPEND itabh.
+
+        LOOP AT ibill WHERE kunag = ibill1-kunag.
+
+          MOVE-CORRESPONDING ibill TO itabi.
+
+          READ TABLE imara WITH KEY matnr = ibill-matnr.
+          IF sy-subrc = 0.
+            itabi-maktx = imara-maktx.
+          ENDIF.
+
+          PERFORM get_lrno.
+          itabi-vbeln = ibill-vbeln.
+          itabi-fkdat = ibill-fkdat.
+          itabi-contn = ibill-contn.
+          itabi-vkorg = ibill-vkorg.
+          itabi-vtweg = ibill-vtweg.
+
+          DATA : wa5 TYPE string.
+          SELECT  SINGLE matnr ,mvgr3 FROM mvke INTO @DATA(wa8)  WHERE matnr = @ibill-matnr.
+*      if it_mvke is not INITIAL.
+          SELECT  SINGLE bezei FROM tvm3t INTO @wa5  WHERE mvgr3 = @wa8-mvgr3.
+*        ENDIF.
+
+
+          IF sy-subrc = 0.
+            itabi-atwrt = wa5.
+            CLEAR: v_atflv.
+          ENDIF.
+
+          READ TABLE imara WITH KEY matnr = ibill-matnr BINARY SEARCH.
+          IF sy-subrc = 0.
+            itabi-groes = imara-groes.
+          ENDIF.
+
+          DATA:lv_aubel TYPE char15.
+
+          LOOP AT  lt_vbrp INTO DATA(wa_vbrp) WHERE vbeln = lw_vbrk-vbeln.
+            itabi-aubel = wa_vbrp-aubel.
+            lv_aubel   =     wa_vbrp-aubel.
+
+            SELECT erdat
+             FROM vbak
+             WHERE vbeln = @lv_aubel
+             INTO TABLE @DATA(lt_vbak).
+
+
+            LOOP AT lt_vbak INTO DATA(wa_vbak).
+              itabi-erdat =  wa_vbak-erdat.
+            ENDLOOP.
+
+            SELECT SINGLE TVAUT~BEZEI
+            FROM VBAK
+            INNER JOIN  TVAUT ON TVAUT~AUGRU = VBAK~AUGRU
+            INTO @DATA(city)
+                  WHERE VBAK~vbeln = @itabi-aubel.
+            IF sy-subrc = 0.
+
+              itabi-ort01 = city.
+            ENDIF.
+
+
+            APPEND :itabi.
+          ENDLOOP.
+
+
+
+**************************************
+*Quality & description
+          READ TABLE iqual WITH KEY matnr = ibill-matnr.
+          IF sy-subrc = 0.
+            itabi-extwg = iqual-extwg.
+            itabi-ewbez = iqual-ewbez.
+          ENDIF.
+
+          APPEND itabi.
+          SORT itabi BY exnum.
+          CLEAR: itabi.
+        ENDLOOP.
+      ENDLOOP.
+
+    ENDLOOP.
+
+    DELETE itabi WHERE vbeln IS INITIAL.
+
+    SORT itabi BY lrno exnum.
+    LOOP AT itabi.
+      CLEAR v_ccode.
+      itabi-bstkd = itabi-xblnr.
+      SELECT SINGLE vgbel vgpos INTO (v_vgbel,v_posnr) FROM vbrp WHERE vbeln = itabi-vbeln AND matnr = itabi-matnr AND fkimg <> 0.
+      IF sy-subrc = 0.
+        SELECT SINGLE vgbel vgpos INTO (v_vgbel1,v_posnr1) FROM lips WHERE vbeln = v_vgbel AND posnr = v_posnr.
+        IF sy-subrc = 0.
+          SELECT SINGLE  bstkd bstdk INTO (v_bstkd,v_bstdk) FROM vbkd WHERE vbeln = v_vgbel1.
+          IF sy-subrc = 0.
+            SELECT SINGLE ccode INTO v_ccode FROM vbak
+              WHERE vbeln = v_vgbel1.
+
+            itabi-bstkd = v_bstkd.
+            itabi-bstdk = v_bstdk.
+
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      SELECT SINGLE mwsbp INTO v_mwsbp FROM vbrp WHERE vbeln = itabi-vbeln AND posnr = itabi-posnr
+             AND matnr = itabi-matnr.
+      itabi-netwr = itabi-netwr + v_mwsbp.
+      MODIFY itabi.
+      CLEAR : v_mwsbp,v_vgbel,v_vgbel1,v_posnr,v_posnr1,v_bstkd,v_bstdk.
+    ENDLOOP.
+*    ENDLOOP.
+    SORT itabi BY vbeln posnr aubel.
+    DELETE ADJACENT DUPLICATES FROM itabi COMPARING vbeln posnr aubel.
+
+    DELETE ADJACENT DUPLICATES FROM itabh COMPARING kunag.
+
+    SORT itabi BY vbeln.
+
+    CALL FUNCTION 'SSF_FUNCTION_MODULE_NAME'
+      EXPORTING
+        formname           = 'ZSSD_DESPATCH_CANCLE'
+      IMPORTING
+        fm_name            = gv_fname
+      EXCEPTIONS
+        no_form            = 1
+        no_function_module = 2
+        OTHERS             = 3.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+    ls_vf01control-getotf = abap_true.
+    ls_vf01control-no_dialog = abap_true.
+    ls_vf01control-preview = ' '.
+    ls_vf01compop-tddest     = 'ZPDF'.
+    ls_vf01compop-tdnewid    = abap_true.
+    ls_vf01compop-tdnoprev   = abap_true.
+
+**********************************************************************************
+    CALL FUNCTION gv_fname
+      EXPORTING
+        control_parameters = ls_vf01control
+        output_options     = ls_vf01compop
+        user_settings      = ' '
+        s_fkdat_low        = lv_date
+        s_fkdat_high       = lv_date2
+      IMPORTING
+        job_output_info    = lv_output_p
+      TABLES
+        itabh              = itabh
+        itabi              = itabi
+      EXCEPTIONS
+        formatting_error   = 1
+        internal_error     = 2
+        send_error         = 3
+        user_canceled      = 4
+        OTHERS             = 5.
+    IF sy-subrc <> 0.
+* MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*         WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+    ENDIF.
+
+    CALL FUNCTION 'CONVERT_OTF'
+      EXPORTING
+        format                = 'PDF'
+      IMPORTING
+        bin_file              = lv_otf
+        bin_filesize          = lv_filesize
+      TABLES
+        otf                   = lv_output_p-otfdata
+        lines                 = lt_lines
+      EXCEPTIONS
+        err_max_linewidth     = 1
+        err_format            = 2
+        err_conv_not_possible = 3
+        err_bad_otf           = 4
+        OTHERS                = 5.
+
+
+    CALL FUNCTION 'CONVERT_OTF'
+      EXPORTING
+        format                = 'PDF'
+      IMPORTING
+        bin_file              = lv_otf
+        bin_filesize          = lv_filesize
+      TABLES
+        otf                   = lv_output_p-otfdata
+        lines                 = lt_lines
+      EXCEPTIONS
+        err_max_linewidth     = 1
+        err_format            = 2
+        err_conv_not_possible = 3
+        err_bad_otf           = 4
+        OTHERS                = 5.
+
+    CALL METHOD cl_document_bcs=>xstring_to_solix
+      EXPORTING
+        ip_xstring = lv_otf
+      RECEIVING
+        rt_solix   = lt_pdf_data_p.
+    "sl
+
+    TRY.
+        "create send request
+        lo_send_request = cl_bcs=>create_persistent( ).
+
+
+        DATA : lv_sub TYPE so_obj_des.
+        DATA : lv_invdt TYPE string.
+
+        CONCATENATE lw_vbrk2-fkdat+6(2)  lw_vbrk2-fkdat+4(2) lw_vbrk2-fkdat+0(4) INTO lv_invdt SEPARATED BY '.'.
+
+        CONCATENATE 'Dispatch from OPIL' lv_invdt INTO lv_sub SEPARATED BY space.
+
+        lo_document = cl_document_bcs=>create_document(
+          i_type    = 'RAW'
+          i_text    = lt_message_body
+          i_subject = lv_sub ).
+
+        REFRESH lt_message_body.
+        lv_header = VALUE #( ( line = |&SO_FILENAME=Dispatch from OPIL for date{ lv_date2  }.pdf|  ) ).
+        lv_subject = lv_sub ."'Dispatch from OPIL'.
+        lo_document->add_attachment(
+          EXPORTING
+            i_attachment_header  = lv_header
+            i_attachment_type    = 'BIN'
+            i_attachment_subject = 'Dispatch from OPIL' "lv_subject
+            i_att_content_hex    = lt_pdf_data_p ).
+
+        "Pass the document to send request
+        lo_send_request->set_document( lo_document ).
+
+        l_memid = lw_vbrk2-kunag && sy-uname && sy-datum.
+
+        IMPORT lt_otf = lt_otf FROM MEMORY ID l_memid.
+        FREE MEMORY ID l_memid.
+        CLEAR: lv_otf,lv_filesize,lt_lines[],lt_pdf_data_p[].
+        CALL FUNCTION 'CONVERT_OTF'
+          EXPORTING
+            format                = 'PDF'
+          IMPORTING
+            bin_file              = lv_otf
+            bin_filesize          = lv_filesize
+          TABLES
+            otf                   = lt_otf
+            lines                 = lt_lines
+          EXCEPTIONS
+            err_max_linewidth     = 1
+            err_format            = 2
+            err_conv_not_possible = 3
+            err_bad_otf           = 4
+            OTHERS                = 5.
+
+        CALL METHOD cl_document_bcs=>xstring_to_solix
+          EXPORTING
+            ip_xstring = lv_otf
+          RECEIVING
+            rt_solix   = lt_pdf_data_p.
+
+        "Pass the document to send request
+        lo_send_request->set_document( lo_document ).
+        "End of Reel Annexure============================================
+
+        "Create sender
+        lv_send = 'sapsystem@opil.in'.
+        lo_sender = cl_cam_address_bcs=>create_internet_address( lv_send ).
+        lo_send_request->set_sender( lo_sender ).
+
+
+        """"""""add receiver
+        SELECT SINGLE adrnr FROM kna1 INTO @DATA(lv_adrnr)
+         WHERE kunnr = @lw_vbrk2-kunag.
+        IF sy-subrc = 0.
+          SELECT SINGLE smtp_addr FROM adr6 INTO @DATA(lv_rec) WHERE addrnumber = @lv_adrnr.
+        ENDIF.
+
+        lo_recipient = cl_cam_address_bcs=>create_internet_address( lv_rec ).
+        lo_send_request->add_recipient(
+          EXPORTING
+            i_recipient = lo_recipient
+            i_express   = 'X' ).
+        lo_send_request->set_sender( lo_sender ).
+
+        "Set sender
+        lv_mail = lv_rec ."ls_mail-smtp_addr.
+        lo_recipient = cl_cam_address_bcs=>create_internet_address( lv_mail )."'support@bizwareinternational.com' ).
+        "Set recipient
+        lo_send_request->add_recipient(
+          EXPORTING
+            i_recipient = lo_recipient
+            i_express   = 'X'
+            i_copy      = 'X' ).
+*          ENDLOOP.
+
+
+        "Send email
+        lo_send_request->send(
+          EXPORTING
+            i_with_error_screen = 'X'
+          RECEIVING
+            result              = lv_sent_to_all ).
+
+        COMMIT WORK.
+        CLEAR: ls_vf01control,ls_vf01compop,lv_output_p,l_vbeln,l_date,l_time,l_qt,lv_otf,lv_filesize,
+        lt_lines[],lt_pdf_data_p[],lv_header,lv_subject,lo_document,lv_send,lo_sender,lv_rec,lo_recipient,lt_otf[],
+        lt_vbeln[],lv_rec,lv_adrnr.
+        COMMIT WORK.
+*        WAIT UP TO 120 SECONDS.
+      CATCH cx_bcs INTO DATA(lo_exp).
+        DATA(lv_msg) = lo_exp->get_text( ).
+    ENDTRY.
+    CLEAR: lw_vbrk2.
+  ENDLOOP.
+
+ENDFORM.
+*  ENDLOOP.
+*&---------------------------------------------------------------------*
+*& Form GET_LRNO
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM get_lrno .
+
+  TYPES : BEGIN OF ty_vbrp,
+            vbeln TYPE vbrp-vbeln,
+            vgbel TYPE vbrp-vgbel,
+          END OF ty_vbrp.
+  TYPES : BEGIN OF ty_likp,
+            vbeln     TYPE likp-vbeln,
+            lr_number TYPE likp-lr_number,
+          END OF ty_likp.
+
+  DATA : wa_lr TYPE ty_likp.
+
+  SELECT SINGLE  vbeln , vgbel FROM vbrp INTO  @DATA(wa6) WHERE vbeln = @ibill-vbeln.
+  SELECT SINGLE  vbeln, lr_number FROM likp INTO @wa_lr WHERE vbeln = @wa6-vgbel.
+  itabi-lrno = wa_lr-lr_number.
+ENDFORM.
